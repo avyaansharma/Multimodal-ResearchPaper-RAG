@@ -1,0 +1,11 @@
+streamlit
+pymupdf
+faiss-cpu
+sentence-transformers
+google-generativeai
+python-dotenv
+pillow
+rank_bm25
+torch
+torchvision
+open_clip_torch
