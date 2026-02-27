@@ -1,6 +1,7 @@
 import google.generativeai as genai
 import os
 import logging
+import time
 from typing import List, Optional, Union
 from PIL import Image
 from dotenv import load_dotenv
@@ -11,16 +12,36 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+def retry_with_backoff(func, max_retries=5, initial_delay=2):
+    """Exponential backoff decorator for Gemini API calls."""
+    def wrapper(*args, **kwargs):
+        delay = initial_delay
+        for i in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                # Catch ResourceExhausted (429) or other API errors
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logger.warning(f"Rate limit hit. Retrying in {delay}s... (Attempt {i+1}/{max_retries})")
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    raise e
+        return func(*args, **kwargs)
+    return wrapper
+
 class VisionModule:
     """
     A production-ready module for multimodal analysis using Google's Gemini API.
-    Handles image analysis and response synthesis with robust error handling.
+    Handles image analysis and response synthesis with robust error handling and retry logic.
     """
     
-    def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(self, model_name: str = "gemini-2.0-flash"):
+        # We use gemini-2.0-flash as the default for better rate limits, 
+        # but the user can override with "gemini-2.5-flash-lite" if valid.
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
-            logger.warning("GEMINI_API_KEY not found in environment. Multimodal features will be limited.")
+            logger.warning("GEMINI_API_KEY not found in environment.")
             self.model = None
             return
 
@@ -33,85 +54,49 @@ class VisionModule:
             self.model = None
 
     def analyze_image(self, image_path: str, query_text: str) -> str:
-        """
-        Analyze an image in the context of a user query.
-        
-        Args:
-            image_path: Path to the image file.
-            query_text: User's question or context for the image.
-            
-        Returns:
-            Description and analysis of the image relative to the query.
-        """
         if not self.model:
-            return "Vision analysis is currently unavailable (API not configured)."
+            return "Vision analysis unavailable."
         
-        if not os.path.exists(image_path):
-            return f"Error: Image file not found at {image_path}"
-
-        try:
+        @retry_with_backoff
+        def _generate():
             image = Image.open(image_path)
             prompt = (
-                f"You are an expert research assistant. Analyze this figure extracted from a scientific paper "
-                f"to answer the following query: '{query_text}'\n\n"
-                "Focus on interpreting data, trends, and significance relevant to the user's question."
+                f"Analyze this research paper figure in the context of: '{query_text}'\n"
+                "Explain the data and relevance purely for scientific research."
             )
-            
-            response = self.model.generate_content([prompt, image])
-            
-            if response and response.text:
-                return response.text
-            return "No analysis could be generated for this image."
-            
+            return self.model.generate_content([prompt, image])
+
+        try:
+            response = _generate()
+            return response.text if response and response.text else "No analysis generated."
         except Exception as e:
             logger.error(f"Image analysis failed: {str(e)}")
-            return f"Error during image analysis: {str(e)}"
+            return f"Error: {str(e)}"
 
-    def synthesize_response(self, 
-                           query: str, 
-                           text_contexts: List[str], 
-                           vision_analyses: List[str]) -> str:
-        """
-        Produce a final synthesized answer combining text retrieval and visual analysis.
-        
-        Args:
-            query: The original user question.
-            text_contexts: List of relevant text chunks from the RAG pipeline.
-            vision_analyses: List of descriptions for retrieved figures.
-            
-        Returns:
-            A comprehensive, professional response.
-        """
+    def synthesize_response(self, query: str, text_contexts: List[str], vision_analyses: List[str]) -> str:
         if not self.model:
-            # Fallback if model is not configured, though synthesis is core
-            return "Synthesis service is unavailable. Please check your API configuration."
+            return "Synthesis service unavailable."
 
-        combined_text_context = "\n\n---\n\n".join(text_contexts)
-        combined_vision_context = "\n\n".join(vision_analyses) if vision_analyses else "No relevant visual data found."
+        combined_text = "\n\n".join(text_contexts)[:10000] # Truncate to save tokens/rate limits
+        combined_vision = "\n\n".join(vision_analyses)
 
         prompt = (
             f"User Query: {query}\n\n"
-            "SYSTEM INSTRUCTIONS:\n"
-            "You are an advanced Multimodal Research Intelligence Engine. Your goal is to provide a "
-            "comprehensive, accurate, and professional answer based ONLY on the provided contexts.\n\n"
-            "RELEVANT TEXT CHUNKS:\n"
-            f"{combined_text_context}\n\n"
-            "VISUAL ANALYSIS FROM DIAGRAMS/FIGURES:\n"
-            f"{combined_vision_context}\n\n"
-            "FINAL TASK:\n"
-            "Integrate both text and visual descriptions into a cohesive answer. "
-            "Cite figures when referencing visual data. If the information is missing, state so clearly."
+            f"Context:\n{combined_text}\n\n"
+            f"Figures:\n{combined_vision}\n\n"
+            "Synthesize a professional research answer."
         )
 
+        @retry_with_backoff
+        def _generate():
+            return self.model.generate_content(prompt)
+
         try:
-            response = self.model.generate_content(prompt)
-            if response and response.text:
-                return response.text
-            return "I apologize, but I couldn't synthesize a complete answer based on the available data."
-            
+            response = _generate()
+            return response.text if response and response.text else "Could not synthesize answer."
         except Exception as e:
             logger.error(f"Synthesis failed: {str(e)}")
-            return f"Error synthesizing final response: {str(e)}"
+            return f"Error: {str(e)}"
 
 if __name__ == "__main__":
     # Quick connectivity test

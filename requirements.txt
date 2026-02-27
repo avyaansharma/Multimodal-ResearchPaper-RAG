@@ -9,3 +9,5 @@ rank_bm25
 torch
 torchvision
 open_clip_torch
+langgraph
+langchain-google-genai
