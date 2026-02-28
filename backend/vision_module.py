@@ -36,12 +36,10 @@ class VisionModule:
     Handles image analysis and response synthesis with robust error handling and retry logic.
     """
     
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
-        # We use gemini-2.0-flash as the default for better rate limits, 
-        # but the user can override with "gemini-2.5-flash-lite" if valid.
+    def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
-            logger.warning("GEMINI_API_KEY not found in environment.")
+            logger.warning("GEMINI_API_KEY not found in environment. Multimodal features will be limited.")
             self.model = None
             return
 

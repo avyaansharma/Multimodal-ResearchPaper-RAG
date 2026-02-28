@@ -7,6 +7,7 @@ from backend.vectorstore import VectorStore
 from backend.retriever import MultimodalRetriever
 from backend.vision_module import VisionModule
 from backend.agent_system import ResearchAgentSystem
+from backend.paper_analyzer import PaperAnalyzer
 from dotenv import load_dotenv
 
 # Page config
@@ -21,14 +22,19 @@ def get_backend():
     vector_store = VectorStore()
     vision = VisionModule()
     agent_system = ResearchAgentSystem()
-    return processor, embedder, vector_store, vision, agent_system
+    paper_analyzer = PaperAnalyzer()
+    return processor, embedder, vector_store, vision, agent_system, paper_analyzer
 
-processor, embedder, vector_store, vision, agent_system = get_backend()
+processor, embedder, vector_store, vision, agent_system, paper_analyzer = get_backend()
 
 st.title("🧠 Multimodal Research Intelligence Engine")
 
 # --- UI Layout: Tabs for different modes ---
-tab_chat, tab_compare = st.tabs(["💬 Interactive Research Chat", "🔍 Research Gap & Comparison (Agentic)"])
+tab_chat, tab_compare, tab_overview = st.tabs([
+    "💬 Interactive Research Chat", 
+    "🔍 Research Gap & Comparison (Agentic)", 
+    "📄 Paper Overview (Short Notes)"
+])
 
 # --- TAB 1: INTERACTIVE RESEARCH CHAT ---
 with tab_chat:
@@ -151,3 +157,43 @@ with tab_compare:
                 st.write(result["gaps"])
     elif not (file_a and file_b):
         st.warning("Please upload both papers to start the analysis.")
+
+# --- TAB 3: PAPER OVERVIEW (SHORT NOTES) ---
+with tab_overview:
+    st.markdown("### 📄 Deep Paper Overview & Analysis")
+    st.info("Upload a research paper to generate a structured overview including Topic, Claim, Evidence, Method, Dataset, Limitations, and Citation.")
+    
+    file_single = st.file_uploader("Upload Paper for Overview", type="pdf", key="file_single")
+    
+    if st.button("Generate Paper Overview") and file_single:
+        with st.spinner("Analyzing paper structure... This involves a non-linear multi-agent feedback loop."):
+            # Extract text
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_file.write(file_single.getvalue())
+                # Use processor to get all text
+                processed_data = processor.process_pdf(tmp_file.name)
+                # Combine all text chunks
+                full_text = " ".join([c["content"] for c in processed_data["chunks"]])
+            
+            # Run LangGraph Paper Analyzer
+            try:
+                result = paper_analyzer.run_analysis(full_text)
+                
+                st.markdown("---")
+                st.markdown(result["final_report"])
+                
+                # Success feedback
+                st.success("Analysis complete!")
+                
+                # Option to download as markdown
+                st.download_button(
+                    label="Download Report as Markdown",
+                    data=result["final_report"],
+                    file_name=f"{file_single.name.replace('.pdf', '')}_overview.md",
+                    mime="text/markdown"
+                )
+            except Exception as e:
+                st.error(f"An error occurred during analysis: {e}")
+                st.info("This might be due to rate limits or PDF format. The system has built-in retries.")
+    elif not file_single:
+        st.warning("Please upload a paper to start.")

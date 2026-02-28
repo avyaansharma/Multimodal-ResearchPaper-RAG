@@ -9,5 +9,7 @@ rank_bm25
 torch
 torchvision
 open_clip_torch
+transformers
+tokenizers>=0.21,<0.22
 langgraph
 langchain-google-genai
